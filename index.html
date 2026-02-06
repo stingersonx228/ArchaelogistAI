@@ -1,0 +1,641 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>AI Археолог — распознавание артефактов</title>
+
+  <!-- Fonts (optional, красиво) -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;600;700&display=swap" rel="stylesheet">
+
+  <!-- TFJS + TeachableMachine Image -->
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.20.0/dist/tf.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@teachablemachine/image@0.8/dist/teachablemachine-image.min.js"></script>
+
+  <style>
+    :root{
+      --bg1:#0b1020;
+      --bg2:#0a2a3a;
+      --card: rgba(255,255,255,.08);
+      --stroke: rgba(255,255,255,.16);
+      --text: rgba(255,255,255,.92);
+      --muted: rgba(255,255,255,.68);
+      --muted2: rgba(255,255,255,.55);
+      --accent:#7dd3fc;
+      --accent2:#a78bfa;
+      --good:#34d399;
+      --warn:#fbbf24;
+      --bad:#fb7185;
+      --shadow: 0 20px 60px rgba(0,0,0,.45);
+      --r: 22px;
+    }
+
+    *{box-sizing:border-box}
+    html,body{height:100%}
+    body{
+      margin:0;
+      font-family: "Manrope", system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+      color:var(--text);
+      background:
+        radial-gradient(1200px 800px at 20% 10%, rgba(125,211,252,.22), transparent 60%),
+        radial-gradient(1000px 700px at 80% 20%, rgba(167,139,250,.18), transparent 55%),
+        radial-gradient(900px 700px at 50% 100%, rgba(52,211,153,.12), transparent 60%),
+        linear-gradient(140deg, var(--bg1), var(--bg2));
+      overflow-x:hidden;
+    }
+
+    .wrap{
+      max-width: 1100px;
+      margin: 0 auto;
+      padding: 28px 18px 48px;
+    }
+
+    header{
+      display:flex;
+      gap:16px;
+      align-items:center;
+      justify-content:space-between;
+      flex-wrap:wrap;
+      margin-bottom: 18px;
+    }
+
+    .brand{
+      display:flex;
+      align-items:center;
+      gap:12px;
+    }
+    .logo{
+      width:44px;height:44px;border-radius:14px;
+      background: linear-gradient(135deg, rgba(125,211,252,.9), rgba(167,139,250,.85));
+      box-shadow: var(--shadow);
+      position:relative;
+      overflow:hidden;
+    }
+    .logo::after{
+      content:"";
+      position:absolute; inset:-40% -40%;
+      background: radial-gradient(circle at 30% 30%, rgba(255,255,255,.45), transparent 45%);
+      transform: rotate(18deg);
+    }
+
+    h1{
+      margin:0;
+      font-size: clamp(20px, 2.2vw, 28px);
+      letter-spacing:.2px;
+      line-height:1.15;
+    }
+    .subtitle{
+      margin: 4px 0 0;
+      color: var(--muted);
+      font-size: 14px;
+    }
+
+    .pillRow{
+      display:flex; gap:10px; align-items:center; flex-wrap:wrap;
+    }
+    .pill{
+      border: 1px solid var(--stroke);
+      background: rgba(255,255,255,.06);
+      padding: 9px 12px;
+      border-radius: 999px;
+      font-size: 13px;
+      color: var(--muted);
+      backdrop-filter: blur(10px);
+    }
+    .pill b{ color: var(--text); font-weight:700; }
+
+    .grid{
+      display:grid;
+      grid-template-columns: 1.15fr .85fr;
+      gap: 16px;
+      margin-top: 18px;
+    }
+    @media (max-width: 900px){
+      .grid{ grid-template-columns: 1fr; }
+    }
+
+    .card{
+      border: 1px solid var(--stroke);
+      background: linear-gradient(180deg, rgba(255,255,255,.08), rgba(255,255,255,.04));
+      border-radius: var(--r);
+      padding: 16px;
+      box-shadow: var(--shadow);
+      backdrop-filter: blur(14px);
+    }
+
+    .sectionTitle{
+      display:flex;
+      align-items:center;
+      justify-content:space-between;
+      gap: 10px;
+      margin-bottom: 12px;
+    }
+    .sectionTitle h2{
+      margin:0;
+      font-size: 16px;
+      color: rgba(255,255,255,.88);
+      letter-spacing:.2px;
+    }
+    .status{
+      font-size: 13px;
+      color: var(--muted);
+      display:flex;
+      align-items:center;
+      gap:8px;
+    }
+    .dot{
+      width:9px; height:9px; border-radius:99px;
+      background: rgba(255,255,255,.25);
+      box-shadow: 0 0 0 4px rgba(255,255,255,.06);
+    }
+    .dot.ok{ background: var(--good); box-shadow: 0 0 0 4px rgba(52,211,153,.15); }
+    .dot.busy{ background: var(--warn); box-shadow: 0 0 0 4px rgba(251,191,36,.15); }
+    .dot.err{ background: var(--bad); box-shadow: 0 0 0 4px rgba(251,113,133,.15); }
+
+    .drop{
+      border: 1.5px dashed rgba(255,255,255,.22);
+      background: rgba(255,255,255,.05);
+      border-radius: calc(var(--r) - 6px);
+      padding: 18px;
+      min-height: 280px;
+      display:flex;
+      gap:14px;
+      align-items:center;
+      justify-content:center;
+      flex-direction:column;
+      position:relative;
+      overflow:hidden;
+      transition: .18s ease;
+    }
+    .drop.drag{
+      border-color: rgba(125,211,252,.65);
+      background: rgba(125,211,252,.08);
+      transform: translateY(-1px);
+    }
+    .drop small{ color: var(--muted2); text-align:center; max-width: 420px; line-height:1.3; }
+    .actions{
+      display:flex; gap:10px; flex-wrap:wrap; justify-content:center;
+    }
+
+    .btn{
+      border:1px solid rgba(255,255,255,.18);
+      background: rgba(255,255,255,.08);
+      color: var(--text);
+      padding: 10px 14px;
+      border-radius: 14px;
+      cursor:pointer;
+      font-weight: 700;
+      font-size: 13px;
+      letter-spacing:.2px;
+      transition: transform .12s ease, background .12s ease, border-color .12s ease;
+      user-select:none;
+    }
+    .btn:hover{ background: rgba(255,255,255,.11); border-color: rgba(255,255,255,.28); }
+    .btn:active{ transform: translateY(1px); }
+    .btn.primary{
+      border-color: rgba(125,211,252,.35);
+      background: linear-gradient(135deg, rgba(125,211,252,.22), rgba(167,139,250,.18));
+    }
+    .btn.primary:hover{
+      border-color: rgba(125,211,252,.55);
+      background: linear-gradient(135deg, rgba(125,211,252,.28), rgba(167,139,250,.22));
+    }
+    .btn.danger{
+      border-color: rgba(251,113,133,.35);
+      background: rgba(251,113,133,.10);
+    }
+
+    .preview{
+      width: min(520px, 100%);
+      border-radius: 18px;
+      border:1px solid rgba(255,255,255,.16);
+      background: rgba(0,0,0,.18);
+      box-shadow: 0 12px 30px rgba(0,0,0,.35);
+      overflow:hidden;
+      display:none;
+    }
+    .preview img{
+      width:100%;
+      height:auto;
+      display:block;
+    }
+
+    .resultHero{
+      display:flex;
+      gap:12px;
+      align-items:flex-start;
+      justify-content:space-between;
+      margin: 8px 0 14px;
+      flex-wrap:wrap;
+    }
+    .resultHero .big{
+      font-size: 22px;
+      font-weight: 800;
+      margin:0;
+      letter-spacing:.2px;
+    }
+    .badge{
+      padding: 7px 10px;
+      border-radius: 999px;
+      border: 1px solid rgba(255,255,255,.16);
+      background: rgba(255,255,255,.08);
+      color: var(--muted);
+      font-size: 13px;
+      white-space:nowrap;
+    }
+    .desc{
+      margin:0;
+      color: var(--muted);
+      line-height:1.45;
+      font-size: 14px;
+    }
+
+    .list{
+      display:flex;
+      flex-direction:column;
+      gap:10px;
+      margin-top: 10px;
+    }
+    .row{
+      border:1px solid rgba(255,255,255,.12);
+      background: rgba(255,255,255,.06);
+      border-radius: 14px;
+      padding: 10px 12px;
+    }
+    .rowTop{
+      display:flex;
+      align-items:center;
+      justify-content:space-between;
+      gap:10px;
+      font-size: 13px;
+    }
+    .rowTop b{ font-weight: 800; }
+    .rowTop span{ color: var(--muted); }
+    .bar{
+      height: 8px;
+      border-radius: 999px;
+      margin-top: 8px;
+      background: rgba(255,255,255,.08);
+      overflow:hidden;
+      border: 1px solid rgba(255,255,255,.10);
+    }
+    .fill{
+      height:100%;
+      width:0%;
+      background: linear-gradient(90deg, rgba(125,211,252,.95), rgba(167,139,250,.90));
+      border-radius: 999px;
+      transition: width .25s ease;
+    }
+
+    .hint{
+      margin-top: 10px;
+      color: var(--muted2);
+      font-size: 12px;
+      line-height:1.4;
+    }
+    .hint code{
+      background: rgba(0,0,0,.25);
+      border:1px solid rgba(255,255,255,.14);
+      padding: 2px 6px;
+      border-radius: 8px;
+      color: rgba(255,255,255,.85);
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+      font-size: 12px;
+    }
+
+    footer{
+      margin-top: 16px;
+      color: rgba(255,255,255,.45);
+      font-size: 12px;
+      text-align:center;
+    }
+  </style>
+</head>
+
+<body>
+  <div class="wrap">
+    <header>
+      <div class="brand">
+        <div class="logo" aria-hidden="true"></div>
+        <div>
+          <h1>AI Археолог</h1>
+          <p class="subtitle">Локальная демка Teachable Machine: сначала превью → потом анализ</p>
+        </div>
+      </div>
+      <div class="pillRow">
+        <div class="pill">Модель: <b>Teachable Machine</b></div>
+        <div class="pill">Режим: <b>локально</b></div>
+        <div class="pill">Вывод: <b>Top-3</b></div>
+      </div>
+    </header>
+
+    <div class="grid">
+      <!-- Left: Upload / Preview -->
+      <section class="card">
+        <div class="sectionTitle">
+          <h2>Фото артефакта</h2>
+          <div class="status" id="modelStatus">
+            <span class="dot busy" id="statusDot"></span>
+            <span id="statusText">Загружаю модель…</span>
+          </div>
+        </div>
+
+        <div class="drop" id="drop">
+          <div class="preview" id="preview">
+            <img id="img" alt="preview" />
+          </div>
+
+          <div id="dropText">
+            <div style="font-weight:800; font-size:15px; letter-spacing:.2px;">
+              Перетащи изображение сюда или выбери файл
+            </div>
+            <small>
+              Советы: один предмет в кадре, минимум фона, нормальное качество.
+              Чем чище фото — тем увереннее предсказание.
+            </small>
+          </div>
+
+          <div class="actions">
+            <button class="btn primary" id="btnPick">Выбрать фото</button>
+            <button class="btn" id="btnDemo">Тест-картинка</button>
+            <button class="btn danger" id="btnClear" title="Очистить">Сброс</button>
+          </div>
+
+          <input type="file" id="file" accept="image/*" hidden />
+        </div>
+
+        <div class="hint">
+          Запуск локально: <code>python -m http.server 8000</code> → <code>http://localhost:8000</code>
+        </div>
+      </section>
+
+      <!-- Right: Result -->
+      <aside class="card">
+        <div class="sectionTitle">
+          <h2>Результат</h2>
+          <div class="pill" style="padding:7px 10px">обновляется мгновенно</div>
+        </div>
+
+        <div class="resultHero">
+          <div>
+            <p class="big" id="bestLabel">—</p>
+            <p class="desc" id="bestDesc">
+              Загрузите фото, чтобы увидеть предсказание и краткое описание.
+            </p>
+            <p class="desc" id="story" style="margin-top:8px; opacity:.9;"></p>
+          </div>
+          <div class="badge" id="bestScore">Уверенность: —</div>
+        </div>
+
+        <div class="list" id="predList"></div>
+      </aside>
+    </div>
+
+    <footer>
+      Сделано для демо на хакатоне.
+    </footer>
+  </div>
+
+  <script>
+    const MODEL_URL = "./model.json";
+    const METADATA_URL = "./metadata.json";
+
+    const CLASS_INFO = {
+      "Мечи и ножи": {
+        title: "Клинковое оружие",
+        desc:
+          "Древние мечи и ножи использовались в бою и ритуалах. Форма клинка и рукояти помогает предположить эпоху и регион."
+      },
+      "Ювелирия": {
+        title: "Древнее украшение",
+        desc:
+          "Украшения отражают социальный статус и культурные традиции. Материал и орнамент помогают датировать находку."
+      },
+      "Монеты": {
+        title: "Древняя монета",
+        desc:
+          "Монеты дают привязку к времени и власти (надписи, символы). Следующий шаг — поиск аналогов в базе."
+      },
+      "Керамика": {
+        title: "Керамика / сосуд",
+        desc:
+          "Керамика — ключ к датировке: форма, обжиг и орнамент помогают определить эпоху и назначение предмета."
+      },
+      "Другое": {
+        title: "Неизвестный объект",
+        desc:
+          "Похоже, это не относится к нашим категориям. Такой класс снижает ошибки на неожиданных изображениях."
+      }
+    };
+
+    const el = (id) => document.getElementById(id);
+    const statusDot = el("statusDot");
+    const statusText = el("statusText");
+
+    const drop = el("drop");
+    const fileInput = el("file");
+    const btnPick = el("btnPick");
+    const btnClear = el("btnClear");
+    const btnDemo = el("btnDemo");
+
+    const img = el("img");
+    const preview = el("preview");
+    const dropText = el("dropText");
+
+    const bestLabel = el("bestLabel");
+    const bestDesc = el("bestDesc");
+    
+    const bestScore = el("bestScore");
+    const predList = el("predList");
+
+    let model = null;
+    let isReady = false;
+
+    function setStatus(state, text){
+      statusText.textContent = text;
+      statusDot.classList.remove("ok","busy","err");
+      statusDot.classList.add(state);
+    }
+
+    function pct(p){ return (p * 100).toFixed(1) + "%"; }
+
+    function clearUI(){
+      img.onload = null;
+      img.src = "";
+      preview.style.display = "none";
+      dropText.style.display = "block";
+      predList.innerHTML = "";
+      bestLabel.textContent = "—";
+      bestDesc.textContent = "Загрузите фото, чтобы увидеть предсказание и краткое описание.";
+      bestScore.textContent = "Уверенность: —";
+      fileInput.value = "";
+      if (isReady) setStatus("ok", "Модель готова");
+      else setStatus("busy", "Загружаю модель…");
+    }
+
+    async function loadModel(){
+      try{
+        setStatus("busy", "Загружаю модель…");
+        model = await tmImage.load(MODEL_URL, METADATA_URL);
+        isReady = true;
+        setStatus("ok", "Модель готова");
+      }catch(err){
+        console.error(err);
+        isReady = false;
+        setStatus("err", "Ошибка загрузки модели");
+        bestDesc.textContent =
+          "Не удалось загрузить model.json / metadata.json. Проверь, что файлы лежат рядом с index.html и открыт локальный сервер.";
+      }
+    }
+
+    // ВАЖНО: единый onload. Сначала превью, потом predict.
+    async function showPreviewFromBlob(blobUrl, { autoPredict = true } = {}) {
+      setStatus("busy", "Загружаю изображение…");
+
+      img.onload = async () => {
+        preview.style.display = "block";
+        dropText.style.display = "none";
+
+        // даём браузеру отрисовать картинку (чтобы реально "показалось перед анализом")
+        await new Promise(requestAnimationFrame);
+        await new Promise(requestAnimationFrame);
+
+        if (autoPredict) await predict();
+      };
+
+      img.src = blobUrl;
+    }
+
+    async function predict(){
+      if(!isReady || !model || !img.src) return;
+
+      try{
+        setStatus("busy", "Анализирую…");
+        const preds = await model.predict(img);
+        preds.sort((a,b) => b.probability - a.probability);
+
+        const top = preds[0];
+        const info = CLASS_INFO[top.className] || { title: top.className, desc: "Описание для этого класса не задано. Заполни CLASS_INFO." };
+
+        bestLabel.textContent = info.title;
+        bestDesc.textContent = info.desc;
+        const STORIES = {
+        "Мечи и ножи": "Подобные клинки часто находят в погребальных комплексах и военных стоянках. Они могли принадлежать воинам степных культур.",
+        "Ювелирия": "Украшения сопровождают погребения и отражают статус владельца и уровень ремесла эпохи.",
+        "Монеты": "Монеты помогают точно датировать слой находки и показывают торговые связи региона.",
+        "Керамика": "Фрагменты керамики находят в жилых слоях поселений и используют для восстановления быта древних людей."
+          };
+
+      el("story").textContent = STORIES[top.className] || "";
+
+        bestScore.textContent = `Уверенность: ${pct(top.probability)}`;
+        const p = top.probability;
+
+        if (p > 0.8) bestScore.style.color = "#34d399";
+        else if (p > 0.6) bestScore.style.color = "#fbbf24";
+        else {
+          bestScore.style.color = "#fb7185";
+          bestDesc.textContent += " Требуется проверка экспертом.";
+        }
+
+
+        predList.innerHTML = "";
+        preds.slice(0,3).forEach(p => {
+          const row = document.createElement("div");
+          row.className = "row";
+          row.innerHTML = `
+            <div class="rowTop">
+              <b>${p.className}</b>
+              <span>${pct(p.probability)}</span>
+            </div>
+            <div class="bar"><div class="fill" style="width:${(p.probability*100).toFixed(1)}%"></div></div>
+          `;
+          predList.appendChild(row);
+        });
+
+        setStatus("ok", "Готово");
+      }catch(err){
+        console.error(err);
+        setStatus("err", "Ошибка предсказания");
+      }
+    }
+
+    function handleFile(file){
+      if(!file) return;
+      if(!file.type.startsWith("image/")) return;
+
+      // Сразу чистим прошлый вывод
+      predList.innerHTML = "";
+      bestLabel.textContent = "—";
+      bestDesc.textContent = "Подготавливаю изображение…";
+      bestScore.textContent = "Уверенность: —";
+
+      const url = URL.createObjectURL(file);
+      showPreviewFromBlob(url, { autoPredict: true });
+    }
+
+    // Buttons
+    btnPick.addEventListener("click", () => fileInput.click());
+    fileInput.addEventListener("change", (e) => handleFile(e.target.files?.[0]));
+    btnClear.addEventListener("click", clearUI);
+
+    // Demo image (заглушка)
+    btnDemo.addEventListener("click", async () => {
+      const svg = `
+        <svg xmlns="http://www.w3.org/2000/svg" width="1200" height="800">
+          <defs>
+            <linearGradient id="g" x1="0" y1="0" x2="1" y2="1">
+              <stop offset="0" stop-color="#7dd3fc"/>
+              <stop offset="1" stop-color="#a78bfa"/>
+            </linearGradient>
+          </defs>
+          <rect width="100%" height="100%" fill="#0b1020"/>
+          <circle cx="300" cy="350" r="180" fill="url(#g)" opacity="0.25"/>
+          <circle cx="900" cy="420" r="260" fill="url(#g)" opacity="0.18"/>
+          <text x="80" y="120" fill="rgba(255,255,255,.9)" font-family="Manrope, Arial" font-size="56" font-weight="700">
+            Demo image
+          </text>
+          <text x="80" y="190" fill="rgba(255,255,255,.65)" font-family="Manrope, Arial" font-size="26">
+            вставьте сюда фотографию
+          </text>
+        </svg>
+      `;
+      const blob = new Blob([svg], {type:"image/svg+xml"});
+      const url = URL.createObjectURL(blob);
+
+      predList.innerHTML = "";
+      bestLabel.textContent = "—";
+      bestDesc.textContent = "Подготавливаю изображение…";
+      bestScore.textContent = "Уверенность: —";
+
+      showPreviewFromBlob(url, { autoPredict: true });
+    });
+
+    // Drag & Drop
+    ["dragenter","dragover"].forEach(evt => {
+      drop.addEventListener(evt, (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        drop.classList.add("drag");
+      });
+    });
+    ["dragleave","drop"].forEach(evt => {
+      drop.addEventListener(evt, (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        drop.classList.remove("drag");
+      });
+    });
+    drop.addEventListener("drop", (e) => {
+      const file = e.dataTransfer?.files?.[0];
+      handleFile(file);
+    });
+
+    // Init
+    clearUI();
+    loadModel();
+  </script>
+</body>
+</html>
